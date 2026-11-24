@@ -399,6 +399,49 @@ static void printNames() {
   Serial.println("用法: name <名字>   例: name HM-A300");
 }
 
+// ============================================================
+// 板上彩色灯（WS2812 类）自测
+//   官方文档写 RGB 灯在 GPIO42，但没实测过；不同批次可能改到 48/38/47。
+//   这条命令就是用来把它验成事实的：哪个脚出颜色，就记到档案里。
+//   neopixelWrite 是 Arduino 3.x 自带（走 RMT，不占 CPU、不影响 WiFi）。
+//   注意 GPIO26~37 被 Flash/PSRAM 占用，代码里直接拒绝，绝不碰。
+// ============================================================
+static const int LED_CANDIDATES[] = {42, 48, 38, 47, 21, 14};
+static const int LED_CAND_N = sizeof(LED_CANDIDATES) / sizeof(LED_CANDIDATES[0]);
+
+static bool led_pin_ok(int pin) {
+  if (pin < 0) return false;
+  if (pin >= 26 && pin <= 37) return false;    // Flash / Octal PSRAM
+  if (pin >= 43 && pin <= 46) return false;    // 本板：43/44 未引出，45 背光，46 DC
+  if (pin == 19 || pin == 20) return false;    // USB D- / D+
+  return true;
+}
+
+static void led_set(int pin, int r, int g, int b) {
+  if (!led_pin_ok(pin)) {
+    Serial.printf("GPIO%d 不可用（Flash/PSRAM/USB 占用，或本板已用于 LCD）\n", pin);
+    return;
+  }
+  neopixelWrite((uint8_t)pin, (uint8_t)r, (uint8_t)g, (uint8_t)b);
+  Serial.printf("GPIO%d -> RGB(%d,%d,%d)\n", pin, r, g, b);
+}
+
+static void led_sweep(int ms) {
+  Serial.println("[LED] 逐个试候选脚，每脚先红后绿再蓝。看到板上有灯变色，记下当前脚号");
+  for (int i = 0; i < LED_CAND_N; i++) {
+    int p = LED_CANDIDATES[i];
+    Serial.printf("[LED] 现在试 GPIO%d\n", p);
+    const uint8_t seq[3][3] = {{40, 0, 0}, {0, 40, 0}, {0, 0, 40}};
+    for (int k = 0; k < 3; k++) {
+      neopixelWrite((uint8_t)p, seq[k][0], seq[k][1], seq[k][2]);
+      delay(ms);
+    }
+    neopixelWrite((uint8_t)p, 0, 0, 0);
+    delay(150);
+  }
+  Serial.println("[LED] 扫完。全程没亮 → 这板没有 WS2812，或灯挂在别的脚");
+}
+
 static void handleSerial() {
   String cmd = Serial.readStringUntil('\n');
   cmd.trim();
@@ -474,6 +517,19 @@ static void handleSerial() {
     display_fill(r, g, b);
   } else if (cmd == "mem") {
     ui_mem_report();
+  } else if (cmd == "ledsweep") {
+    led_sweep(350);
+  } else if (cmd.startsWith("led ")) {
+    // led <pin> <r> <g> <b>   例: led 42 40 0 0
+    // led off                 关掉所有候选脚
+    if (cmd.substring(4) == "off") {
+      for (int i = 0; i < LED_CAND_N; i++) neopixelWrite((uint8_t)LED_CANDIDATES[i], 0, 0, 0);
+      Serial.println("[LED] 全部熄灭");
+    } else {
+      int p = -1, r = 0, g = 0, b = 0;
+      if (sscanf(cmd.c_str() + 4, "%d %d %d %d", &p, &r, &g, &b) >= 1) led_set(p, r, g, b);
+      else Serial.println("用法: led <脚> <r> <g> <b>   /   led off   /   ledsweep");
+    }
   } else if (cmd == "colortest") {
     ui_show_color_page();
   } else if (cmd == "colors") {
@@ -743,9 +799,12 @@ static void printResetReason() {
     case ESP_RST_WDT:       cn = "看门狗";         break;
     case ESP_RST_BROWNOUT:  cn = "供电掉压(BROWNOUT)"; hint = "（USB 供电不足，换口/换线，别用扩展坞）"; break;
     case ESP_RST_SDIO:      cn = "SDIO";           break;
-    default:                cn = "其它";           break;
+#ifdef ESP_RST_USB
+    case ESP_RST_USB:       cn = "USB 复位";       hint = "（串口被打开/烧录触发，不是真故障）"; break;
+#endif
+    default:                cn = "其它";           hint = "（0x15/USB_UART_CHIP_RESET 属串口打开触发，可忽略）"; break;
   }
-  Serial.printf("[SYS] 上次重启原因: %s %s\n", cn, hint);
+  Serial.printf("[SYS] 上次重启原因: %s(%d) %s\n", cn, (int)esp_reset_reason(), hint);
 }
 
 void setup() {
