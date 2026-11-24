@@ -1,0 +1,30 @@
+# ---------- PlatformIO 构建产物 ----------
+.pio/
+.pioenvs/
+.piolibdeps/
+.vscode/
+
+# ---------- 本地私有配置（WiFi 密码等，不入库）----------
+# firmware/src/config.h 里有 __has_include("config_local.h")，
+# 把真实 WiFi 名/密码放这里，就不会进仓库。
+firmware/src/config_local.h
+
+# ---------- Python ----------
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ---------- 运行期产物：打印任务与调试日志 ----------
+# jobs/ 下是真实面单（含收件人姓名/电话/地址），绝对不能进公开仓库
+pc-agent/jobs/*
+!pc-agent/jobs/.gitkeep
+*.bin
+tp_log*.txt
+tp_raw*.txt
+ui_session.log
+
+# ---------- 系统 ----------
+Thumbs.db
+.DS_Store
+desktop.ini
